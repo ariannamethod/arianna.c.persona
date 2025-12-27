@@ -19,6 +19,9 @@ sys.path.insert(0, '/home/user/llama3.np')
 from llama3 import apply_rotary_emb, RMSNorm, FeedForward, Attention, compute_cos_sin_cache
 from config import ModelArgs
 
+# Book travel for dynamic knowledge loading!
+from book_travel import BookTraveler
+
 
 class ShardEmbedding:
     """
@@ -260,6 +263,10 @@ class ShardLlama:
         print("  Initializing trigram bridge (Leo-style)...")
         self.trigrams: Dict[tuple, int] = {}  # (tok1, tok2, tok3) -> count
 
+        # Book traveler for dynamic knowledge loading!
+        print("  Initializing book traveler (field-activated excerpts)...")
+        self.book_traveler = BookTraveler(books_dir=Path('.'), max_active=10, excerpt_size=2000)
+
         # Load ONLY layer weights (not embeddings/lm_head!)
         print("Loading trained layer weights...")
         self.layers = []
@@ -316,6 +323,37 @@ class ShardLlama:
         for i in range(len(tokens) - 2):
             trigram = (tokens[i], tokens[i+1], tokens[i+2])
             self.trigrams[trigram] = self.trigrams.get(trigram, 0) + 1
+
+    def respond(self, query: str, tokenizer, max_tokens: int = 50, temperature: float = 0.8):
+        """
+        Respond to query with BOOK TRAVEL!
+
+        Flow:
+        1. Query activates field pulse
+        2. Field travels through books (finds resonant excerpts)
+        3. Learn from activated excerpts
+        4. Generate response with blended knowledge!
+        """
+        print(f"\n🌊 Field activated by query: '{query}'")
+
+        # 1. Book travel! (field-activated loading)
+        print("📚 Traveling through books...")
+        activated_excerpts = self.book_traveler.travel(query)
+
+        # 2. Learn from activated excerpts!
+        print(f"✨ Learning from {len(activated_excerpts)} excerpts...")
+        for excerpt in activated_excerpts:
+            self.learn_from_shard(excerpt.content, tokenizer)
+
+        # 3. Generate response!
+        print("💭 Generating response...")
+        prompt_tokens = np.array(tokenizer.encode(query), dtype=np.int32)
+        output_tokens = self.generate(prompt_tokens, max_tokens=max_tokens, temperature=temperature, tokenizer=tokenizer)
+
+        # Decode
+        response = tokenizer.decode(output_tokens.tolist())
+
+        return response
 
     def forward(self, tokens: np.ndarray, start_pos: int = 0) -> np.ndarray:
         """
