@@ -449,18 +449,18 @@ def get_5m_config() -> TransformerConfig:
         dim=144,
         n_layers=6,
         n_heads=6,
-        vocab_size=4096,
+        vocab_size=256,  # Byte-level
         max_seq_len=512
     )
 
 
 def get_8m_config() -> TransformerConfig:
-    """~8.1M parameters - balanced"""
+    """~8M parameters - BEST for reasoning"""
     return TransformerConfig(
-        dim=180,
+        dim=256,
         n_layers=6,
-        n_heads=6,
-        vocab_size=4096,
+        n_heads=8,
+        vocab_size=256,  # Byte-level
         max_seq_len=512
     )
 
@@ -471,6 +471,6 @@ def get_6m_config() -> TransformerConfig:
         dim=128,
         n_layers=8,
         n_heads=8,
-        vocab_size=4096,
+        vocab_size=256,  # Byte-level
         max_seq_len=512
     )

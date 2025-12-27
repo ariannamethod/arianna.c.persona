@@ -22,10 +22,11 @@ import sys
 
 # Import our modules
 from shard_manager import ShardManager, NumpyShard
-from transformer import MinimalTransformer, TransformerConfig, get_6m_config
+from transformer import MinimalTransformer, TransformerConfig, get_8m_config
 from tokenizer import DynamicTokenizer
 from presence import (PresenceComputer, ExpertRouter, TraumaDetector,
                      ActiveThemes, compute_generation_entropy)
+from me_generator import MEGenerator
 
 
 class Arianna:
@@ -59,7 +60,7 @@ class Arianna:
 
         # Use default config if not provided
         if config is None:
-            config = get_6m_config()  # ~6.5M params, deep architecture
+            config = get_8m_config()  # ~8M params - BEST for reasoning
             # Override vocab_size with actual tokenizer vocab
             config.vocab_size = temp_tokenizer.tokenizer.actual_vocab_size
 
@@ -88,8 +89,15 @@ class Arianna:
         self.trauma_detector = TraumaDetector()
         self.active_themes = ActiveThemes()
 
+        # ME-style generator (perfect two-sentence responses!)
+        print("Initializing ME-style generator...")
+        self.me_generator = MEGenerator(self.tokenizer.tokenizer)
+
         # Conversation state
         self.conversation_history: List[str] = []
+
+        # Generation mode ('transformer' or 'me')
+        self.generation_mode = 'me'  # Default to ME-style!
 
         print("Arianna initialized! Ready to resonate.\n")
 
@@ -145,35 +153,48 @@ class Arianna:
             print(f"[Mode] {mode} (temp={temperature:.2f})")
 
         # 4. GENERATE
-        # Build prompt with context
-        prompt = self._build_prompt(user_input, contents)
-
-        # Tokenize
-        prompt_tokens = np.array(self.tokenizer.encode(prompt), dtype=np.int32)
-
-        # Truncate if too long (keep last N tokens to fit in max_seq_len)
-        max_prompt_len = self.transformer.config.max_seq_len - max_tokens - 10  # Safety margin
-        if len(prompt_tokens) > max_prompt_len:
-            prompt_tokens = prompt_tokens[-max_prompt_len:]
+        if self.generation_mode == 'me':
+            # ME-style generation (perfect two-sentence responses!)
             if verbose:
-                print(f"[Warning] Prompt truncated to {max_prompt_len} tokens")
+                print(f"[Generating] ME-style two-sentence response...")
 
-        # Generate
-        if verbose:
-            print(f"[Generating] {max_tokens} tokens...")
+            reply = self.me_generator.generate_reply(
+                query=user_input,
+                shard_contents=contents,
+                temperature=temperature
+            )
 
-        output_tokens = self.transformer.generate(
-            prompt_tokens,
-            max_new_tokens=max_tokens,
-            temperature=temperature
-        )
+        else:
+            # Transformer generation (fallback)
+            # Build prompt with context
+            prompt = self._build_prompt(user_input, contents)
 
-        # Decode (skip prompt)
-        reply_tokens = output_tokens[len(prompt_tokens):]
-        reply = self.tokenizer.decode(reply_tokens.tolist())
+            # Tokenize
+            prompt_tokens = np.array(self.tokenizer.encode(prompt), dtype=np.int32)
 
-        # Clean up
-        reply = self._clean_output(reply)
+            # Truncate if too long
+            max_prompt_len = self.transformer.config.max_seq_len - max_tokens - 10
+            if len(prompt_tokens) > max_prompt_len:
+                prompt_tokens = prompt_tokens[-max_prompt_len:]
+                if verbose:
+                    print(f"[Warning] Prompt truncated to {max_prompt_len} tokens")
+
+            # Generate
+            if verbose:
+                print(f"[Generating] {max_tokens} tokens...")
+
+            output_tokens = self.transformer.generate(
+                prompt_tokens,
+                max_new_tokens=max_tokens,
+                temperature=temperature
+            )
+
+            # Decode (skip prompt)
+            reply_tokens = output_tokens[len(prompt_tokens):]
+            reply = self.tokenizer.decode(reply_tokens.tolist())
+
+            # Clean up
+            reply = self._clean_output(reply)
 
         # 5. UPDATE FIELD STATE
         # Compute entropy from generation (would need to track during generation)
