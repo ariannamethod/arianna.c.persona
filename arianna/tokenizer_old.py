@@ -20,31 +20,68 @@ import hashlib
 
 class SimpleTokenizer:
     """
-    ULTRA SIMPLE byte-level tokenizer
+    Simple character-level tokenizer with word boundaries
 
-    Vocab size = 256 (all bytes!)
-    No BPE, no fancy shit, just works!
+    This is intentionally simple - we don't need complex BPE
+    because knowledge lives in shards, not tokens
     """
 
-    def __init__(self, vocab_size: int = 256):
-        self.vocab_size = 256  # Always 256 for byte-level
-        self.actual_vocab_size = 256
+    def __init__(self, vocab_size: int = 4096):
+        self.vocab_size = vocab_size
+
+        # Build simple vocabulary
+        # ASCII printable + special tokens + Cyrillic (for Russian)
+        self.special_tokens = {
+            "<PAD>": 0,
+            "<BOS>": 1,
+            "<EOS>": 2,
+            "<UNK>": 3,
+        }
+
+        # ASCII printable (32-126)
+        ascii_chars = [chr(i) for i in range(32, 127)]
+
+        # Cyrillic (for Russian support)
+        cyrillic_chars = [chr(i) for i in range(0x0400, 0x0500)]
+
+        # Common chars
+        all_chars = ascii_chars + cyrillic_chars
+
+        # Build vocab
+        self.char_to_id = self.special_tokens.copy()
+        for i, char in enumerate(all_chars[:vocab_size - len(self.special_tokens)]):
+            self.char_to_id[char] = len(self.special_tokens) + i
+
+        # Reverse mapping
+        self.id_to_char = {v: k for k, v in self.char_to_id.items()}
+
+        # Actual vocab size (for model sync)
+        self.actual_vocab_size = len(self.char_to_id)
 
     def encode(self, text: str) -> List[int]:
-        """Encode text to byte IDs"""
-        byte_array = text.encode('utf-8', errors='ignore')
-        return list(byte_array)
+        """Encode text to token IDs"""
+        tokens = [self.char_to_id.get("<BOS>", 1)]
+
+        for char in text:
+            token_id = self.char_to_id.get(char, self.char_to_id.get("<UNK>", 3))
+            tokens.append(token_id)
+
+        tokens.append(self.char_to_id.get("<EOS>", 2))
+
+        return tokens
 
     def decode(self, tokens: List[int]) -> str:
-        """Decode byte IDs to text"""
-        # Clip to valid byte range
-        valid_tokens = [max(0, min(255, t)) for t in tokens]
-        byte_array = bytes(valid_tokens)
+        """Decode token IDs to text"""
+        chars = []
 
-        try:
-            return byte_array.decode('utf-8', errors='ignore')
-        except:
-            return ""
+        for token_id in tokens:
+            char = self.id_to_char.get(token_id, "<UNK>")
+
+            # Skip special tokens in output
+            if char not in ["<PAD>", "<BOS>", "<EOS>", "<UNK>"]:
+                chars.append(char)
+
+        return "".join(chars)
 
 
 class BookIndex:

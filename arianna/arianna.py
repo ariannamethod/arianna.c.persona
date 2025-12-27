@@ -49,11 +49,21 @@ class Arianna:
         self.books_dir = Path(books_dir)
         self.shard_dir = Path(shard_dir)
 
+        # Build tokenizer first to get actual vocab size
+        print("Building tokenizer...")
+        temp_tokenizer = DynamicTokenizer(
+            books_dir=books_dir,
+            shard_manager=None,  # Will create properly later
+            vocab_size=4096
+        )
+
         # Use default config if not provided
         if config is None:
             config = get_6m_config()  # ~6.5M params, deep architecture
+            # Override vocab_size with actual tokenizer vocab
+            config.vocab_size = temp_tokenizer.tokenizer.actual_vocab_size
 
-        print(f"Initializing Arianna ({config.param_count() / 1e6:.1f}M params)...")
+        print(f"Initializing Arianna ({config.param_count() / 1e6:.1f}M params, vocab={config.vocab_size})...")
 
         # Core components
         print("Loading transformer reasoning engine...")
@@ -67,11 +77,9 @@ class Arianna:
         )
 
         print("Building book index...")
-        self.tokenizer = DynamicTokenizer(
-            books_dir=books_dir,
-            shard_manager=self.shard_manager,
-            vocab_size=config.vocab_size
-        )
+        # Create tokenizer with shard manager
+        temp_tokenizer.shard_manager = self.shard_manager
+        self.tokenizer = temp_tokenizer
 
         # Presence system (Leo-style)
         print("Initializing presence system...")

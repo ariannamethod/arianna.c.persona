@@ -334,13 +334,15 @@ class MinimalTransformer:
     def generate(self,
                  prompt_tokens: np.ndarray,
                  max_new_tokens: int = 100,
-                 temperature: float = 1.0) -> np.ndarray:
+                 temperature: float = 1.0,
+                 stop_on_eos: bool = False) -> np.ndarray:
         """
         Autoregressive generation
 
         prompt_tokens: [seq_len] - initial tokens
         max_new_tokens: how many tokens to generate
         temperature: sampling temperature
+        stop_on_eos: if True, stop on EOS token (default False for testing)
 
         Returns: [seq_len + max_new_tokens] - full sequence
         """
@@ -357,6 +359,11 @@ class MinimalTransformer:
             # Apply temperature
             next_token_logits = next_token_logits / temperature
 
+            # Suppress special tokens (PAD, BOS, EOS, UNK) to avoid early stopping
+            # This helps random weights generate more tokens
+            for special_id in [0, 1, 2, 3]:
+                next_token_logits[special_id] -= 10.0  # Reduce probability
+
             # Sample
             probs = softmax(next_token_logits)
             next_token = np.random.choice(self.config.vocab_size, p=probs)
@@ -364,8 +371,8 @@ class MinimalTransformer:
             # Append
             tokens = np.append(tokens, next_token)
 
-            # Stop if we hit EOS (token 2, assuming BPE-style)
-            if next_token == 2:
+            # Stop if we hit EOS (only if enabled)
+            if stop_on_eos and next_token == 2:
                 break
 
         return tokens
