@@ -46,8 +46,8 @@ print(f"  Query: {query}")
 print(f"  Tokens: {tokens[:20]}")
 
 try:
-    # Generate
-    output_tokens = llama.generate(prompt_tokens, max_tokens=20, temperature=0.8)
+    # Generate (with tokenizer for word-level repetition check!)
+    output_tokens = llama.generate(prompt_tokens, max_tokens=20, temperature=0.8, tokenizer=tok)
 
     # Decode
     output_text = tok.decode(output_tokens.tolist())
