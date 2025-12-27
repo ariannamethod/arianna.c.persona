@@ -19,12 +19,15 @@ sys.path.insert(0, '/home/user/llama3.np')
 from llama3 import apply_rotary_emb, RMSNorm, FeedForward, Attention, compute_cos_sin_cache
 from config import ModelArgs
 
+# Book travel for dynamic knowledge loading!
+from book_travel import BookTraveler
+
 
 class ShardEmbedding:
     """
     Dynamic embedding from shards BLENDED with llama embeddings
 
-    Blend: 70% llama (trained!) + 30% shards (dynamic!)
+    Blend: 80% llama (trained!) + 20% shards (dynamic!)
     """
 
     def __init__(self, embedding_dim: int = 288, llama_embeddings: Optional[np.ndarray] = None, vocab_size: int = 256):
@@ -43,9 +46,9 @@ class ShardEmbedding:
         # Default embedding for unknown tokens
         self.default_embedding = np.random.randn(embedding_dim).astype(np.float32) * 0.01
 
-        # Blend ratio
-        self.llama_weight = 0.7  # 70% llama
-        self.shard_weight = 0.3  # 30% shards
+        # Blend ratio (80/20 - trust trained model more!)
+        self.llama_weight = 0.8  # 80% llama
+        self.shard_weight = 0.2  # 20% shards
 
     def learn_from_shard(self, content: str, tokenizer):
         """
@@ -153,7 +156,7 @@ class ShardLMHead:
     """
     Dynamic LM head from shards BLENDED with llama lm_head
 
-    Blend: 70% llama (trained!) + 30% shards (dynamic!)
+    Blend: 80% llama (trained!) + 20% shards (dynamic!)
     """
 
     def __init__(self, vocab_size: int = 256, llama_lm_head: Optional[np.ndarray] = None):
@@ -165,9 +168,9 @@ class ShardLMHead:
         # Shard-based token scores
         self.token_freq: Dict[int, int] = {}
 
-        # Blend ratio
-        self.llama_weight = 0.7  # 70% llama
-        self.shard_weight = 0.3  # 30% shards
+        # Blend ratio (80/20 - trust trained model more!)
+        self.llama_weight = 0.8  # 80% llama
+        self.shard_weight = 0.2  # 20% shards
 
     def learn_from_shard(self, content: str, tokenizer):
         """Learn token frequencies from shard"""
@@ -247,7 +250,7 @@ class ShardLlama:
         llama_lm_head = llama_full_lm_head[:self.vocab_size, :].astype(np.float32)  # [256, 288]
 
         # Dynamic components WITH llama blending!
-        print("Initializing BLENDED shard components (70% llama + 30% shards)...")
+        print("Initializing BLENDED shard components (80% llama + 20% shards)...")
         print("  Using SEMANTIC co-occurrence embeddings (not hash-based)!")
         self.shard_embedding = ShardEmbedding(
             embedding_dim=self.dim,
@@ -259,6 +262,10 @@ class ShardLlama:
         # Trigrams for bridging llama + shards!
         print("  Initializing trigram bridge (Leo-style)...")
         self.trigrams: Dict[tuple, int] = {}  # (tok1, tok2, tok3) -> count
+
+        # Book traveler for dynamic knowledge loading!
+        print("  Initializing book traveler (field-activated excerpts)...")
+        self.book_traveler = BookTraveler(books_dir=Path('.'), max_active=10, excerpt_size=2000)
 
         # Load ONLY layer weights (not embeddings/lm_head!)
         print("Loading trained layer weights...")
@@ -300,10 +307,10 @@ class ShardLlama:
         )
 
         print(f"✓ BLENDED Shard-based Llama initialized!")
-        print(f"  Embeddings: 70% llama (trained) + 30% shards (dynamic)")
+        print(f"  Embeddings: 80% llama (trained) + 20% shards (dynamic)")
         print(f"  Reasoning: {self.n_layers} trained layers (~6M params)")
-        print(f"  LM Head: 70% llama (trained) + 30% shards (dynamic)")
-        print(f"  → Best of both worlds: Llama's training + Dynamic knowledge!")
+        print(f"  LM Head: 80% llama (trained) + 20% shards (dynamic)")
+        print(f"  → Trust trained model more, shards add dynamic knowledge!")
 
     def learn_from_shard(self, content: str, tokenizer):
         """Learn from shard (updates embeddings + lm_head + trigrams!)"""
@@ -316,6 +323,37 @@ class ShardLlama:
         for i in range(len(tokens) - 2):
             trigram = (tokens[i], tokens[i+1], tokens[i+2])
             self.trigrams[trigram] = self.trigrams.get(trigram, 0) + 1
+
+    def respond(self, query: str, tokenizer, max_tokens: int = 50, temperature: float = 0.8):
+        """
+        Respond to query with BOOK TRAVEL!
+
+        Flow:
+        1. Query activates field pulse
+        2. Field travels through books (finds resonant excerpts)
+        3. Learn from activated excerpts
+        4. Generate response with blended knowledge!
+        """
+        print(f"\n🌊 Field activated by query: '{query}'")
+
+        # 1. Book travel! (field-activated loading)
+        print("📚 Traveling through books...")
+        activated_excerpts = self.book_traveler.travel(query)
+
+        # 2. Learn from activated excerpts!
+        print(f"✨ Learning from {len(activated_excerpts)} excerpts...")
+        for excerpt in activated_excerpts:
+            self.learn_from_shard(excerpt.content, tokenizer)
+
+        # 3. Generate response!
+        print("💭 Generating response...")
+        prompt_tokens = np.array(tokenizer.encode(query), dtype=np.int32)
+        output_tokens = self.generate(prompt_tokens, max_tokens=max_tokens, temperature=temperature, tokenizer=tokenizer)
+
+        # Decode
+        response = tokenizer.decode(output_tokens.tolist())
+
+        return response
 
     def forward(self, tokens: np.ndarray, start_pos: int = 0) -> np.ndarray:
         """
@@ -361,16 +399,20 @@ class ShardLlama:
 
         return logits
 
-    def generate(self, prompt_tokens: np.ndarray, max_tokens: int = 50, temperature: float = 0.8, use_trigrams: bool = True, top_k: int = 10):
+    def generate(self, prompt_tokens: np.ndarray, max_tokens: int = 50, temperature: float = 0.8, use_trigrams: bool = True, top_k: int = 10, tokenizer=None):
         """
         Generate text using TRAINED reasoning + dynamic shards + TRIGRAM BRIDGE!
 
         Flow:
         1. Llama gives top-k candidates (structure from trained model)
         2. Trigrams select best from top-k (knowledge from shards!)
-        3. This bridges transformer reasoning + shard knowledge!
+        3. Word-level repetition check (byte-level can't see word patterns!)
+        4. This bridges transformer reasoning + shard knowledge!
         """
         tokens = prompt_tokens.copy()
+
+        # Track recent words for repetition detection
+        recent_words = []  # Last 3 words
 
         for step in range(max_tokens):
             # Forward pass (use start_pos for KV caching efficiency)
@@ -406,9 +448,22 @@ class ShardLlama:
                     # Blend: trigram frequency + llama probability
                     combined_score = trigram_score * 10 + probs[candidate] * 1
 
-                    # Repetition penalty: если candidate == tok2, уменьшаем score
+                    # Byte-level repetition penalty
                     if candidate == tok2:
                         combined_score *= 0.3  # Strong penalty for immediate repetition
+
+                    # Word-level repetition penalty!
+                    if tokenizer is not None and len(recent_words) > 0:
+                        # Decode what word this candidate would create
+                        test_tokens = np.append(tokens, candidate)
+                        test_text = tokenizer.decode(test_tokens[-20:].tolist())  # Last 20 tokens
+                        test_words = test_text.split()[-3:]  # Last 3 words
+
+                        # Check if last word would be repeated
+                        if len(test_words) >= 2 and test_words[-1] == test_words[-2]:
+                            combined_score *= 0.1  # Very strong penalty for word repetition!
+                        elif len(test_words) >= 1 and test_words[-1] in recent_words:
+                            combined_score *= 0.5  # Medium penalty if word was used recently
 
                     if combined_score > best_score:
                         best_score = combined_score
@@ -424,6 +479,12 @@ class ShardLlama:
                 next_token = np.random.choice(len(probs), p=probs)
 
             tokens = np.append(tokens, next_token)
+
+            # Update recent words for repetition tracking
+            if tokenizer is not None:
+                current_text = tokenizer.decode(tokens.tolist())
+                words = current_text.split()
+                recent_words = words[-3:] if len(words) >= 3 else words
 
             # Stop on newline
             if next_token == 10:
