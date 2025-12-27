@@ -16,7 +16,7 @@ import sys
 
 # Add llama3.np to path
 sys.path.insert(0, '/home/user/llama3.np')
-from llama3 import apply_rotary_emb, RMSNorm
+from llama3 import apply_rotary_emb, RMSNorm, FeedForward, Attention, compute_cos_sin_cache
 from config import ModelArgs
 
 
@@ -185,21 +185,40 @@ class ShardLlama:
         print("Loading trained layer weights...")
         self.layers = []
         for i in range(self.n_layers):
-            layer_weights = {
-                'q_proj': self.weights[f'model.layers.{i}.self_attn.q_proj.weight'],
-                'k_proj': self.weights[f'model.layers.{i}.self_attn.k_proj.weight'],
-                'v_proj': self.weights[f'model.layers.{i}.self_attn.v_proj.weight'],
-                'o_proj': self.weights[f'model.layers.{i}.self_attn.o_proj.weight'],
-                'gate_proj': self.weights[f'model.layers.{i}.mlp.gate_proj.weight'],
-                'up_proj': self.weights[f'model.layers.{i}.mlp.up_proj.weight'],
-                'down_proj': self.weights[f'model.layers.{i}.mlp.down_proj.weight'],
-                'input_ln': self.weights[f'model.layers.{i}.input_layernorm.weight'],
-                'post_attn_ln': self.weights[f'model.layers.{i}.post_attention_layernorm.weight'],
+            # Create layer objects with TRAINED weights!
+            layer = {
+                'attention': Attention(
+                    q_weight=self.weights[f'model.layers.{i}.self_attn.q_proj.weight'],
+                    k_weight=self.weights[f'model.layers.{i}.self_attn.k_proj.weight'],
+                    v_weight=self.weights[f'model.layers.{i}.self_attn.v_proj.weight'],
+                    o_weight=self.weights[f'model.layers.{i}.self_attn.o_proj.weight'],
+                    args=self.args
+                ),
+                'feed_forward': FeedForward(
+                    up_weight=self.weights[f'model.layers.{i}.mlp.up_proj.weight'],
+                    gate_weight=self.weights[f'model.layers.{i}.mlp.gate_proj.weight'],
+                    down_weight=self.weights[f'model.layers.{i}.mlp.down_proj.weight']
+                ),
+                'input_norm': RMSNorm(
+                    weight=self.weights[f'model.layers.{i}.input_layernorm.weight'],
+                    eps=1e-5
+                ),
+                'post_attn_norm': RMSNorm(
+                    weight=self.weights[f'model.layers.{i}.post_attention_layernorm.weight'],
+                    eps=1e-5
+                )
             }
-            self.layers.append(layer_weights)
+            self.layers.append(layer)
 
         self.output_norm = self.weights['model.norm.weight']
         self.output_norm_obj = RMSNorm(self.output_norm, eps=1e-5)
+
+        # Precompute RoPE frequencies
+        print("Precomputing RoPE frequencies...")
+        self.freqs_cos, self.freqs_sin = compute_cos_sin_cache(
+            head_dim=self.args.dim // self.args.n_heads,
+            max_seq_len=self.args.max_seq_len
+        )
 
         print(f"✓ Shard-based Llama initialized!")
         print(f"  Reasoning: {self.n_layers} trained layers (~6M params)")
@@ -210,36 +229,59 @@ class ShardLlama:
         self.shard_embedding.learn_from_shard(content, tokenizer)
         self.shard_lm_head.learn_from_shard(content, tokenizer)
 
-    def forward(self, tokens: np.ndarray) -> np.ndarray:
+    def forward(self, tokens: np.ndarray, start_pos: int = 0) -> np.ndarray:
         """
-        Forward pass
+        Forward pass with FULL trained layers!
 
         tokens: [batch, seq_len]
         returns: logits [batch, seq_len, vocab_size]
         """
+        batch, seq_len = tokens.shape
+
         # 1. Dynamic embedding (from shards!)
         h = self.shard_embedding(tokens)
 
-        # 2. Transformer layers (TRAINED!)
-        # (Simplified - full implementation would include RoPE, attention, etc.)
-        # For now: pass through
-        # TODO: Implement full layer forward pass
+        # 2. Get RoPE frequencies for this sequence
+        freqs_cos = self.freqs_cos[start_pos:start_pos + seq_len]
+        freqs_sin = self.freqs_sin[start_pos:start_pos + seq_len]
 
-        # 3. Output norm
+        # 3. Create causal mask
+        if seq_len > 1:
+            mask = np.full((seq_len, seq_len), -np.inf, dtype=np.float32)
+            mask = np.triu(mask, k=1)  # Upper triangular
+        else:
+            mask = None
+
+        # 4. Pass through TRAINED transformer layers! 🔥
+        for layer in self.layers:
+            # Pre-norm architecture
+            # Attention block
+            h_norm = layer['input_norm'](h)
+            h_attn = layer['attention'](h_norm, start_pos, mask, freqs_cos, freqs_sin)
+            h = h + h_attn  # Residual
+
+            # FFN block
+            h_norm = layer['post_attn_norm'](h)
+            h_ffn = layer['feed_forward'](h_norm)
+            h = h + h_ffn  # Residual
+
+        # 5. Output norm
         h = self.output_norm_obj(h)
 
-        # 4. Dynamic LM head (from shards!)
+        # 6. Dynamic LM head (from shards!)
         logits = self.shard_lm_head(h)
 
         return logits
 
     def generate(self, prompt_tokens: np.ndarray, max_tokens: int = 50, temperature: float = 0.8):
-        """Generate text"""
+        """
+        Generate text using TRAINED reasoning + dynamic shards!
+        """
         tokens = prompt_tokens.copy()
 
-        for _ in range(max_tokens):
-            # Forward
-            logits = self.forward(tokens.reshape(1, -1))
+        for step in range(max_tokens):
+            # Forward pass (use start_pos for KV caching efficiency)
+            logits = self.forward(tokens.reshape(1, -1), start_pos=0)
 
             # Get last token logits
             next_logits = logits[0, -1, :]
