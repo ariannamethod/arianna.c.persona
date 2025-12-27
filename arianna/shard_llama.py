@@ -86,25 +86,26 @@ class ShardEmbedding:
         """
         Compute semantic embeddings from co-occurrence matrix.
 
-        Uses SHARED random projection for speed (optimization for 32k vocab!)
+        Uses SPARSE projection for speed (100x faster with 32k vocab!)
         """
         if not self.co_occurrence:
             return
 
+        print(f"  → Computing embeddings for {len(self.co_occurrence)} tokens...")
+
         # For each token with co-occurrence data
         for tok, context_counts in self.co_occurrence.items():
-            # Create sparse vector [vocab_size] with co-occurrence counts
-            co_vec = np.zeros(self.vocab_size, dtype=np.float32)
+            # SPARSE OPTIMIZATION: Don't build dense vector!
+            # Only process non-zero entries (typically ~50-100 vs 32k!)
+
+            # Apply log transform and accumulate projection
+            embedding = np.zeros(self.embedding_dim, dtype=np.float32)
             for context_tok, count in context_counts.items():
                 if context_tok < self.vocab_size:
-                    co_vec[context_tok] = count
-
-            # Apply log transform (dampens high frequencies)
-            co_vec = np.log1p(co_vec)
-
-            # Use SHARED projection matrix (much faster for 32k vocab!)
-            # Project: [vocab_size] @ [vocab_size, dim] → [dim]
-            embedding = co_vec @ self.projection_matrix
+                    # Log-transformed count
+                    log_count = np.log1p(count)
+                    # Add weighted projection vector
+                    embedding += log_count * self.projection_matrix[context_tok]
 
             # Normalize
             norm = np.linalg.norm(embedding)
@@ -117,6 +118,8 @@ class ShardEmbedding:
                 self.shard_embeddings[tok] = 0.7 * self.shard_embeddings[tok] + 0.3 * embedding
             else:
                 self.shard_embeddings[tok] = embedding
+
+        print(f"  ✓ Embeddings computed!")
 
     def __call__(self, tokens: np.ndarray) -> np.ndarray:
         """
@@ -337,10 +340,24 @@ class ShardLlama:
         print("📚 Traveling through books...")
         activated_excerpts = self.book_traveler.travel(query)
 
-        # 2. Learn from activated excerpts!
+        # 2. Learn from activated excerpts (BATCHED for speed!)
         print(f"✨ Learning from {len(activated_excerpts)} excerpts...")
-        for excerpt in activated_excerpts:
-            self.learn_from_shard(excerpt.content, tokenizer)
+        # Tokenize all excerpts first
+        print(f"  → Tokenizing excerpts with BPE...")
+        all_tokens = []
+        for i, excerpt in enumerate(activated_excerpts):
+            print(f"  → Tokenizing excerpt {i+1}/{len(activated_excerpts)} ({len(excerpt.content)} chars)...")
+            tokens = tokenizer.encode(excerpt.content, add_bos=False, add_eos=False)
+            print(f"    ✓ Got {len(tokens)} tokens")
+            all_tokens.extend(tokens)
+            # Learn trigrams (incremental)
+            for i in range(len(tokens) - 2):
+                trigram = (tokens[i], tokens[i+1], tokens[i+2])
+                self.trigrams[trigram] = self.trigrams.get(trigram, 0) + 1
+
+        # Learn embeddings & lm_head in ONE pass (computes embeddings ONCE!)
+        self.shard_embedding.learn_from_tokens(all_tokens)
+        self.shard_lm_head.learn_from_tokens(all_tokens)
 
         # 3. Generate response!
         print("💭 Generating response...")
