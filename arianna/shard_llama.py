@@ -54,15 +54,12 @@ class ShardEmbedding:
         # Instead of creating new matrix per token, reuse one!
         self.projection_matrix = np.random.randn(vocab_size, embedding_dim).astype(np.float32) * 0.1
 
-    def learn_from_shard(self, content: str, tokenizer):
+    def learn_from_tokens(self, tokens: list):
         """
-        Learn embeddings from shard content using SEMANTIC co-occurrence!
+        Learn embeddings from PRE-TOKENIZED content (OPTIMIZATION!)
 
-        Builds co-occurrence matrix and computes embeddings via random projection.
+        This avoids re-tokenizing which is slow with BPE!
         """
-        # Tokenize content
-        tokens = tokenizer.encode(content)
-
         # Build co-occurrence matrix
         window = 5
         for i in range(len(tokens)):
@@ -172,10 +169,8 @@ class ShardLMHead:
         self.llama_weight = 0.8  # 80% llama
         self.shard_weight = 0.2  # 20% shards
 
-    def learn_from_shard(self, content: str, tokenizer):
-        """Learn token frequencies from shard"""
-        tokens = tokenizer.encode(content)
-
+    def learn_from_tokens(self, tokens: list):
+        """Learn token frequencies from PRE-TOKENIZED content (OPTIMIZATION!)"""
         for tok in tokens:
             self.token_freq[tok] = self.token_freq.get(tok, 0) + 1
 
@@ -312,12 +307,16 @@ class ShardLlama:
 
     def learn_from_shard(self, content: str, tokenizer):
         """Learn from shard (updates embeddings + lm_head + trigrams!)"""
-        # Learn embeddings and lm_head
-        self.shard_embedding.learn_from_shard(content, tokenizer)
-        self.shard_lm_head.learn_from_shard(content, tokenizer)
+        # OPTIMIZATION: Tokenize ONCE, reuse everywhere!
+        tokens = tokenizer.encode(content, add_bos=False, add_eos=False)
+
+        # Learn embeddings (pass tokens directly!)
+        self.shard_embedding.learn_from_tokens(tokens)
+
+        # Learn lm_head (pass tokens!)
+        self.shard_lm_head.learn_from_tokens(tokens)
 
         # Learn trigrams (Leo-style!)
-        tokens = tokenizer.encode(content)
         for i in range(len(tokens) - 2):
             trigram = (tokens[i], tokens[i+1], tokens[i+2])
             self.trigrams[trigram] = self.trigrams.get(trigram, 0) + 1
