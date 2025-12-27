@@ -34,8 +34,8 @@ class ShardEmbedding:
         self.embedding_dim = embedding_dim
         self.vocab_size = vocab_size
 
-        # Llama pretrained embeddings (vocab=256 for byte-level)
-        self.llama_embeddings = llama_embeddings  # [256, 288]
+        # Llama pretrained embeddings
+        self.llama_embeddings = llama_embeddings
 
         # Co-occurrence matrix for semantic embeddings
         self.co_occurrence: Dict[int, Dict[int, int]] = {}  # token -> {context_token: count}
@@ -49,6 +49,10 @@ class ShardEmbedding:
         # Blend ratio (80/20 - trust trained model more!)
         self.llama_weight = 0.8  # 80% llama
         self.shard_weight = 0.2  # 20% shards
+
+        # SHARED projection matrix (optimization for 32k vocab!)
+        # Instead of creating new matrix per token, reuse one!
+        self.projection_matrix = np.random.randn(vocab_size, embedding_dim).astype(np.float32) * 0.1
 
     def learn_from_shard(self, content: str, tokenizer):
         """
@@ -85,7 +89,7 @@ class ShardEmbedding:
         """
         Compute semantic embeddings from co-occurrence matrix.
 
-        Uses random projection for dimensionality reduction.
+        Uses SHARED random projection for speed (optimization for 32k vocab!)
         """
         if not self.co_occurrence:
             return
@@ -101,13 +105,9 @@ class ShardEmbedding:
             # Apply log transform (dampens high frequencies)
             co_vec = np.log1p(co_vec)
 
-            # Random projection to embedding_dim
-            # (Deterministic based on token for consistency)
-            rng = np.random.RandomState(tok)
-            proj_matrix = rng.randn(self.vocab_size, self.embedding_dim).astype(np.float32) * 0.1
-
+            # Use SHARED projection matrix (much faster for 32k vocab!)
             # Project: [vocab_size] @ [vocab_size, dim] → [dim]
-            embedding = co_vec @ proj_matrix
+            embedding = co_vec @ self.projection_matrix
 
             # Normalize
             norm = np.linalg.norm(embedding)
@@ -238,19 +238,16 @@ class ShardLlama:
         self.args = ModelArgs()
         self.dim = self.args.dim
         self.n_layers = self.args.n_layers
-        self.vocab_size = 256  # Byte-level for now
+        self.vocab_size = 32000  # FULL BPE vocab! (was 256 byte-level)
 
-        # Extract llama embeddings and lm_head (first 256 tokens for byte-level)
-        print("Extracting llama embeddings and lm_head for blending...")
-        llama_full_embeddings = self.weights['model.embed_tokens.weight']  # [32000, 288]
-        llama_full_lm_head = self.weights['lm_head.weight']  # [32000, 288]
-
-        # Take first 256 tokens (byte-level range)
-        llama_embeddings = llama_full_embeddings[:self.vocab_size, :].astype(np.float32)  # [256, 288]
-        llama_lm_head = llama_full_lm_head[:self.vocab_size, :].astype(np.float32)  # [256, 288]
+        # Extract llama embeddings and lm_head (FULL vocab now!)
+        print("Extracting FULL BPE embeddings and lm_head for blending...")
+        llama_embeddings = self.weights['model.embed_tokens.weight'].astype(np.float32)  # [32000, 288]
+        llama_lm_head = self.weights['lm_head.weight'].astype(np.float32)  # [32000, 288]
 
         # Dynamic components WITH llama blending!
         print("Initializing BLENDED shard components (80% llama + 20% shards)...")
+        print("  Using FULL BPE vocab (32k tokens)!")
         print("  Using SEMANTIC co-occurrence embeddings (not hash-based)!")
         self.shard_embedding = ShardEmbedding(
             embedding_dim=self.dim,
@@ -307,10 +304,11 @@ class ShardLlama:
         )
 
         print(f"✓ BLENDED Shard-based Llama initialized!")
+        print(f"  Vocab: {self.vocab_size} BPE tokens (not byte-level!)")
         print(f"  Embeddings: 80% llama (trained) + 20% shards (dynamic)")
         print(f"  Reasoning: {self.n_layers} trained layers (~6M params)")
         print(f"  LM Head: 80% llama (trained) + 20% shards (dynamic)")
-        print(f"  → Trust trained model more, shards add dynamic knowledge!")
+        print(f"  → BPE encoding matches llama's training! Quality++!")
 
     def learn_from_shard(self, content: str, tokenizer):
         """Learn from shard (updates embeddings + lm_head + trigrams!)"""
