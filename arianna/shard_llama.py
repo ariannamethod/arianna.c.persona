@@ -340,28 +340,24 @@ class ShardLlama:
         print("📚 Traveling through books...")
         activated_excerpts = self.book_traveler.travel(query)
 
-        # 2. Learn from activated excerpts (BATCHED for speed!)
-        print(f"✨ Learning from {len(activated_excerpts)} excerpts...")
-        # Tokenize all excerpts first
-        print(f"  → Tokenizing excerpts with BPE...")
-        all_tokens = []
-        for i, excerpt in enumerate(activated_excerpts):
-            print(f"  → Tokenizing excerpt {i+1}/{len(activated_excerpts)} ({len(excerpt.content)} chars)...")
-            tokens = tokenizer.encode(excerpt.content, add_bos=False, add_eos=False)
-            print(f"    ✓ Got {len(tokens)} tokens")
-            all_tokens.extend(tokens)
-            # Learn trigrams (incremental)
-            for i in range(len(tokens) - 2):
-                trigram = (tokens[i], tokens[i+1], tokens[i+2])
-                self.trigrams[trigram] = self.trigrams.get(trigram, 0) + 1
+        # 2. Build context from excerpts (INSTANT - no learning!)
+        print(f"✨ Building context from {len(activated_excerpts)} excerpts...")
+        # Combine excerpt content (creates rich context!)
+        context_parts = [exc.content[:100] for exc in activated_excerpts]  # First 100 chars each (fast!)
+        context = '\n'.join(context_parts)
 
-        # Learn embeddings & lm_head in ONE pass (computes embeddings ONCE!)
-        self.shard_embedding.learn_from_tokens(all_tokens)
-        self.shard_lm_head.learn_from_tokens(all_tokens)
+        # Create contextual prompt
+        contextual_query = f"{context}\n\nQuestion: {query}\nAnswer:"
+        print(f"  ✓ Context ready! ({len(context)} chars)")
 
-        # 3. Generate response!
+        # NOTE: No learning needed!
+        # → Llama's pretrained embeddings (perfect with BPE!)
+        # → Book excerpts in prompt context (dynamic knowledge!)
+        # → No tokenization overhead (instant!)
+
+        # 3. Generate response with context!
         print("💭 Generating response...")
-        prompt_tokens = np.array(tokenizer.encode(query), dtype=np.int32)
+        prompt_tokens = np.array(tokenizer.encode(contextual_query), dtype=np.int32)
         output_tokens = self.generate(prompt_tokens, max_tokens=max_tokens, temperature=temperature, tokenizer=tokenizer)
 
         # Decode
