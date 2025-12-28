@@ -64,7 +64,7 @@ while True:
         response = llama.respond(
             query=query,
             tokenizer=tok,
-            max_tokens=40,  # Longer response!
+            max_tokens=50,  # Complete sentences!
             temperature=0.8
         )
 

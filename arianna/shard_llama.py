@@ -343,25 +343,32 @@ class ShardLlama:
         # 2. Build context from excerpts (INSTANT - no learning!)
         print(f"✨ Building context from {len(activated_excerpts)} excerpts...")
         # Combine excerpt content (creates rich context!)
-        context_parts = [exc.content[:100] for exc in activated_excerpts]  # First 100 chars each (fast!)
-        context = '\n'.join(context_parts)
+        context_parts = [exc.content[:200] for exc in activated_excerpts]  # 200 chars each (richer!)
+        context = '\n\n'.join(context_parts)
 
-        # Create contextual prompt
-        contextual_query = f"{context}\n\nQuestion: {query}\nAnswer:"
+        # Create chat-style prompt (natural conversation!)
+        contextual_query = f"""Context (Arianna's knowledge):
+{context}
+
+User: {query}
+Arianna:"""
         print(f"  ✓ Context ready! ({len(context)} chars)")
 
         # NOTE: No learning needed!
         # → Llama's pretrained embeddings (perfect with BPE!)
         # → Book excerpts in prompt context (dynamic knowledge!)
-        # → No tokenization overhead (instant!)
+        # → Chat format = natural responses!
 
         # 3. Generate response with context!
         print("💭 Generating response...")
         prompt_tokens = np.array(tokenizer.encode(contextual_query), dtype=np.int32)
+        prompt_length = len(prompt_tokens)
+
         output_tokens = self.generate(prompt_tokens, max_tokens=max_tokens, temperature=temperature, tokenizer=tokenizer)
 
-        # Decode
-        response = tokenizer.decode(output_tokens.tolist())
+        # Decode ONLY the new tokens (skip prompt!)
+        new_tokens = output_tokens[prompt_length:]  # Remove prompt
+        response = tokenizer.decode(new_tokens.tolist())
 
         return response
 
