@@ -138,74 +138,130 @@ class BookTraveler:
         # Active excerpts
         self.active_excerpts: Dict[str, BookExcerpt] = {}  # key -> excerpt
 
-        # Book index (all available books)
-        self.available_books: List[Path] = []
+        # Book index (hierarchical!)
+        self.core_books: List[Path] = []  # CORE: always available
+        self.story_books: List[Path] = []  # STORIES: LRU + field pulse
+
+        # LRU cache for recently used books
+        self.lru_cache: List[Path] = []  # Most recent first
+        self.max_lru = 10
+
         self._index_books()
 
     def _index_books(self):
-        """Find all available books"""
-        # Look in personality/ folder
+        """Find all available books (hierarchical!)"""
         personality_dir = self.books_dir / 'personality'
-        if personality_dir.exists():
-            self.available_books = list(personality_dir.glob('ariannabook*.md'))
-        else:
-            # Fallback to current dir
-            self.available_books = list(self.books_dir.glob('ariannabook*.md'))
-        print(f"📚 Indexed {len(self.available_books)} books in personality/")
+
+        # Index CORE books (concepts - always available!)
+        core_dir = personality_dir / 'core'
+        if core_dir.exists():
+            self.core_books = list(core_dir.glob('ariannabook*.md'))
+
+        # Index STORY books (episodic - LRU + field pulse)
+        stories_dir = personality_dir / 'stories'
+        if stories_dir.exists():
+            self.story_books = list(stories_dir.glob('ariannabook*.md'))
+
+        print(f"📚 Indexed {len(self.core_books)} CORE + {len(self.story_books)} STORIES")
 
     def travel(self, query: str) -> List[BookExcerpt]:
         """
-        Travel through books based on query!
+        Travel through books based on query (HIERARCHICAL!)
+
+        3 Levels:
+        1. CORE: Always include 1-2 core concept excerpts (50 chars each)
+        2. LRU: Check recently used books first (1 book if match)
+        3. STORIES: Field pulse through all stories (1-2 books)
 
         Returns list of activated excerpts
         """
-        # Create field pulse from query
         pulse = FieldPulse(query)
-
-        # Find resonant books
-        resonances = []
-        for book_path in self.available_books[:20]:  # Check first 20 books
-            try:
-                # Read book header (first 500 chars for speed)
-                with open(book_path, encoding='utf-8') as f:
-                    preview = f.read(500)
-
-                # Compute resonance
-                resonance_score = pulse.resonance(preview)
-
-                if resonance_score > 0.1:  # Threshold
-                    resonances.append((book_path, resonance_score))
-
-            except Exception as e:
-                continue
-
-        # Sort by resonance
-        resonances.sort(key=lambda x: x[1], reverse=True)
-
-        # Load top resonant excerpts
         activated = []
-        for book_path, score in resonances[:3]:  # Top 3 books
-            excerpt = self._load_excerpt(book_path, pulse)
+
+        # LEVEL 1: CORE (always include!)
+        if self.core_books:
+            # Load 1-2 random core books (short excerpts!)
+            import random
+            core_sample = random.sample(self.core_books, min(2, len(self.core_books)))
+            for book_path in core_sample:
+                excerpt = self._load_excerpt(book_path, pulse, max_chars=50)
+                if excerpt:
+                    activated.append(excerpt)
+                    print(f"  🧠 CORE: {book_path.name[:20]}... (always active)")
+
+        # LEVEL 2: LRU CACHE (check recent books first!)
+        lru_match = self._check_lru(pulse)
+        if lru_match:
+            excerpt = self._load_excerpt(lru_match, pulse, max_chars=100)
             if excerpt:
                 activated.append(excerpt)
+                print(f"  🔄 LRU: {lru_match.name[:20]}... (recent memory)")
 
-        # Evict old excerpts if too many active
-        self._evict_old()
+        # LEVEL 3: FIELD PULSE (search all stories by resonance)
+        resonances = []
+        for book_path in self.story_books[:30]:  # Check first 30 stories
+            try:
+                with open(book_path, encoding='utf-8') as f:
+                    preview = f.read(500)
+                resonance_score = pulse.resonance(preview)
+                if resonance_score > 0.1:
+                    resonances.append((book_path, resonance_score))
+            except:
+                continue
+
+        # Sort by resonance, take top 2
+        resonances.sort(key=lambda x: x[1], reverse=True)
+        for book_path, score in resonances[:2]:
+            excerpt = self._load_excerpt(book_path, pulse, max_chars=100)
+            if excerpt:
+                activated.append(excerpt)
+                self._update_lru(book_path)  # Add to LRU cache
+                print(f"  ✨ Loaded: {book_path.name} [0:{len(excerpt.content)}] (resonance: {score:.2f})")
 
         return activated
 
-    def _load_excerpt(self, book_path: Path, pulse: FieldPulse) -> Optional[BookExcerpt]:
-        """Load relevant excerpt from book"""
+    def _check_lru(self, pulse: FieldPulse) -> Optional[Path]:
+        """Check LRU cache for matching books"""
+        for book_path in self.lru_cache[:5]:  # Check top 5 recent books
+            try:
+                with open(book_path, encoding='utf-8') as f:
+                    preview = f.read(500)
+                resonance = pulse.resonance(preview)
+                if resonance > 0.15:  # Higher threshold for LRU
+                    return book_path
+            except:
+                continue
+        return None
+
+    def _update_lru(self, book_path: Path):
+        """Update LRU cache with recently used book"""
+        # Remove if already in cache
+        if book_path in self.lru_cache:
+            self.lru_cache.remove(book_path)
+        # Add to front (most recent)
+        self.lru_cache.insert(0, book_path)
+        # Keep only max_lru entries
+        self.lru_cache = self.lru_cache[:self.max_lru]
+
+    def _load_excerpt(self, book_path: Path, pulse: FieldPulse, max_chars: int = 2000) -> Optional[BookExcerpt]:
+        """Load relevant excerpt from book (up to max_chars)"""
         try:
             with open(book_path, encoding='utf-8') as f:
                 full_content = f.read()
 
-            # Find most resonant section
-            # Split into chunks
+            # For short excerpts (core books), just take beginning
+            if max_chars <= 100:
+                content = full_content[:max_chars]
+                excerpt = BookExcerpt(book_path, 0, len(content), content)
+                excerpt.access()
+                self.active_excerpts[f"{book_path.name}:0-{len(content)}"] = excerpt
+                return excerpt
+
+            # For longer excerpts, find best resonant section
             chunks = []
-            for i in range(0, len(full_content), self.excerpt_size // 2):  # Overlap
-                chunk = full_content[i:i + self.excerpt_size]
-                if len(chunk) > 100:  # Min size
+            for i in range(0, len(full_content), max_chars // 2):  # Overlap
+                chunk = full_content[i:i + max_chars]
+                if len(chunk) > 50:
                     chunks.append((i, chunk))
 
             # Score each chunk
@@ -221,17 +277,9 @@ class BookTraveler:
             if best_chunk:
                 start, content = best_chunk
                 end = start + len(content)
-
-                # Create excerpt
-                key = f"{book_path.name}:{start}-{end}"
                 excerpt = BookExcerpt(book_path, start, end, content)
                 excerpt.access()
-
-                # Add to active
-                self.active_excerpts[key] = excerpt
-
-                print(f"  ✨ Loaded: {book_path.name} [{start}:{end}] (resonance: {best_score:.2f})")
-
+                self.active_excerpts[f"{book_path.name}:{start}-{end}"] = excerpt
                 return excerpt
 
         except Exception as e:
