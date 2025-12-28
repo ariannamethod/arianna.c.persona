@@ -37,7 +37,7 @@ for i, query in enumerate(queries, 1):
     response = llama.respond(
         query=query,
         tokenizer=tok,
-        max_tokens=30,
+        max_tokens=50,  # Longer for complete sentences!
         temperature=0.8
     )
 
