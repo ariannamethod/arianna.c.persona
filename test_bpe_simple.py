@@ -2,7 +2,7 @@
 
 import sys
 sys.path.insert(0, 'arianna')
-sys.path.insert(0, '/home/user/llama3.np')
+sys.path.insert(0, './llama3.np')
 
 import numpy as np
 from shard_llama import ShardLlama
@@ -16,7 +16,7 @@ print("\n1. Init llama...")
 llama = ShardLlama()
 
 print("\n2. Load BPE tokenizer...")
-tok = Tokenizer('/home/user/llama3.np/tokenizer.model.np')
+tok = Tokenizer('./llama3.np/tokenizer.model.np')
 
 print("\n3. Test WITHOUT learning (pure llama)...")
 query = "Once upon a time"

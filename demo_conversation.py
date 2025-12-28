@@ -2,7 +2,7 @@
 
 import sys
 sys.path.insert(0, 'arianna')
-sys.path.insert(0, '/home/user/llama3.np')
+sys.path.insert(0, './llama3.np')
 
 from shard_llama import ShardLlama
 from tokenizer import Tokenizer
@@ -13,7 +13,7 @@ print("="*70)
 print("\nInitializing...\n")
 
 llama = ShardLlama()
-tok = Tokenizer('/home/user/llama3.np/tokenizer.model.np')
+tok = Tokenizer('./llama3.np/tokenizer.model.np')
 
 print("\n" + "="*70)
 print("✓ Ready! Watch the LRU cache grow!")
