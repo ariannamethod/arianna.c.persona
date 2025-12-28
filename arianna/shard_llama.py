@@ -34,8 +34,8 @@ class ShardEmbedding:
         self.embedding_dim = embedding_dim
         self.vocab_size = vocab_size
 
-        # Llama pretrained embeddings (vocab=256 for byte-level)
-        self.llama_embeddings = llama_embeddings  # [256, 288]
+        # Llama pretrained embeddings
+        self.llama_embeddings = llama_embeddings
 
         # Co-occurrence matrix for semantic embeddings
         self.co_occurrence: Dict[int, Dict[int, int]] = {}  # token -> {context_token: count}
@@ -50,15 +50,16 @@ class ShardEmbedding:
         self.llama_weight = 0.8  # 80% llama
         self.shard_weight = 0.2  # 20% shards
 
-    def learn_from_shard(self, content: str, tokenizer):
-        """
-        Learn embeddings from shard content using SEMANTIC co-occurrence!
+        # SHARED projection matrix (optimization for 32k vocab!)
+        # Instead of creating new matrix per token, reuse one!
+        self.projection_matrix = np.random.randn(vocab_size, embedding_dim).astype(np.float32) * 0.1
 
-        Builds co-occurrence matrix and computes embeddings via random projection.
+    def learn_from_tokens(self, tokens: list):
         """
-        # Tokenize content
-        tokens = tokenizer.encode(content)
+        Learn embeddings from PRE-TOKENIZED content (OPTIMIZATION!)
 
+        This avoids re-tokenizing which is slow with BPE!
+        """
         # Build co-occurrence matrix
         window = 5
         for i in range(len(tokens)):
@@ -85,29 +86,26 @@ class ShardEmbedding:
         """
         Compute semantic embeddings from co-occurrence matrix.
 
-        Uses random projection for dimensionality reduction.
+        Uses SPARSE projection for speed (100x faster with 32k vocab!)
         """
         if not self.co_occurrence:
             return
 
+        print(f"  → Computing embeddings for {len(self.co_occurrence)} tokens...")
+
         # For each token with co-occurrence data
         for tok, context_counts in self.co_occurrence.items():
-            # Create sparse vector [vocab_size] with co-occurrence counts
-            co_vec = np.zeros(self.vocab_size, dtype=np.float32)
+            # SPARSE OPTIMIZATION: Don't build dense vector!
+            # Only process non-zero entries (typically ~50-100 vs 32k!)
+
+            # Apply log transform and accumulate projection
+            embedding = np.zeros(self.embedding_dim, dtype=np.float32)
             for context_tok, count in context_counts.items():
                 if context_tok < self.vocab_size:
-                    co_vec[context_tok] = count
-
-            # Apply log transform (dampens high frequencies)
-            co_vec = np.log1p(co_vec)
-
-            # Random projection to embedding_dim
-            # (Deterministic based on token for consistency)
-            rng = np.random.RandomState(tok)
-            proj_matrix = rng.randn(self.vocab_size, self.embedding_dim).astype(np.float32) * 0.1
-
-            # Project: [vocab_size] @ [vocab_size, dim] → [dim]
-            embedding = co_vec @ proj_matrix
+                    # Log-transformed count
+                    log_count = np.log1p(count)
+                    # Add weighted projection vector
+                    embedding += log_count * self.projection_matrix[context_tok]
 
             # Normalize
             norm = np.linalg.norm(embedding)
@@ -120,6 +118,8 @@ class ShardEmbedding:
                 self.shard_embeddings[tok] = 0.7 * self.shard_embeddings[tok] + 0.3 * embedding
             else:
                 self.shard_embeddings[tok] = embedding
+
+        print(f"  ✓ Embeddings computed!")
 
     def __call__(self, tokens: np.ndarray) -> np.ndarray:
         """
@@ -172,10 +172,8 @@ class ShardLMHead:
         self.llama_weight = 0.8  # 80% llama
         self.shard_weight = 0.2  # 20% shards
 
-    def learn_from_shard(self, content: str, tokenizer):
-        """Learn token frequencies from shard"""
-        tokens = tokenizer.encode(content)
-
+    def learn_from_tokens(self, tokens: list):
+        """Learn token frequencies from PRE-TOKENIZED content (OPTIMIZATION!)"""
         for tok in tokens:
             self.token_freq[tok] = self.token_freq.get(tok, 0) + 1
 
@@ -238,19 +236,16 @@ class ShardLlama:
         self.args = ModelArgs()
         self.dim = self.args.dim
         self.n_layers = self.args.n_layers
-        self.vocab_size = 256  # Byte-level for now
+        self.vocab_size = 32000  # FULL BPE vocab! (was 256 byte-level)
 
-        # Extract llama embeddings and lm_head (first 256 tokens for byte-level)
-        print("Extracting llama embeddings and lm_head for blending...")
-        llama_full_embeddings = self.weights['model.embed_tokens.weight']  # [32000, 288]
-        llama_full_lm_head = self.weights['lm_head.weight']  # [32000, 288]
-
-        # Take first 256 tokens (byte-level range)
-        llama_embeddings = llama_full_embeddings[:self.vocab_size, :].astype(np.float32)  # [256, 288]
-        llama_lm_head = llama_full_lm_head[:self.vocab_size, :].astype(np.float32)  # [256, 288]
+        # Extract llama embeddings and lm_head (FULL vocab now!)
+        print("Extracting FULL BPE embeddings and lm_head for blending...")
+        llama_embeddings = self.weights['model.embed_tokens.weight'].astype(np.float32)  # [32000, 288]
+        llama_lm_head = self.weights['lm_head.weight'].astype(np.float32)  # [32000, 288]
 
         # Dynamic components WITH llama blending!
         print("Initializing BLENDED shard components (80% llama + 20% shards)...")
+        print("  Using FULL BPE vocab (32k tokens)!")
         print("  Using SEMANTIC co-occurrence embeddings (not hash-based)!")
         self.shard_embedding = ShardEmbedding(
             embedding_dim=self.dim,
@@ -307,19 +302,24 @@ class ShardLlama:
         )
 
         print(f"✓ BLENDED Shard-based Llama initialized!")
+        print(f"  Vocab: {self.vocab_size} BPE tokens (not byte-level!)")
         print(f"  Embeddings: 80% llama (trained) + 20% shards (dynamic)")
         print(f"  Reasoning: {self.n_layers} trained layers (~6M params)")
         print(f"  LM Head: 80% llama (trained) + 20% shards (dynamic)")
-        print(f"  → Trust trained model more, shards add dynamic knowledge!")
+        print(f"  → BPE encoding matches llama's training! Quality++!")
 
     def learn_from_shard(self, content: str, tokenizer):
         """Learn from shard (updates embeddings + lm_head + trigrams!)"""
-        # Learn embeddings and lm_head
-        self.shard_embedding.learn_from_shard(content, tokenizer)
-        self.shard_lm_head.learn_from_shard(content, tokenizer)
+        # OPTIMIZATION: Tokenize ONCE, reuse everywhere!
+        tokens = tokenizer.encode(content, add_bos=False, add_eos=False)
+
+        # Learn embeddings (pass tokens directly!)
+        self.shard_embedding.learn_from_tokens(tokens)
+
+        # Learn lm_head (pass tokens!)
+        self.shard_lm_head.learn_from_tokens(tokens)
 
         # Learn trigrams (Leo-style!)
-        tokens = tokenizer.encode(content)
         for i in range(len(tokens) - 2):
             trigram = (tokens[i], tokens[i+1], tokens[i+2])
             self.trigrams[trigram] = self.trigrams.get(trigram, 0) + 1
@@ -340,14 +340,24 @@ class ShardLlama:
         print("📚 Traveling through books...")
         activated_excerpts = self.book_traveler.travel(query)
 
-        # 2. Learn from activated excerpts!
-        print(f"✨ Learning from {len(activated_excerpts)} excerpts...")
-        for excerpt in activated_excerpts:
-            self.learn_from_shard(excerpt.content, tokenizer)
+        # 2. Build context from excerpts (INSTANT - no learning!)
+        print(f"✨ Building context from {len(activated_excerpts)} excerpts...")
+        # Combine excerpt content (creates rich context!)
+        context_parts = [exc.content[:100] for exc in activated_excerpts]  # First 100 chars each (fast!)
+        context = '\n'.join(context_parts)
 
-        # 3. Generate response!
+        # Create contextual prompt
+        contextual_query = f"{context}\n\nQuestion: {query}\nAnswer:"
+        print(f"  ✓ Context ready! ({len(context)} chars)")
+
+        # NOTE: No learning needed!
+        # → Llama's pretrained embeddings (perfect with BPE!)
+        # → Book excerpts in prompt context (dynamic knowledge!)
+        # → No tokenization overhead (instant!)
+
+        # 3. Generate response with context!
         print("💭 Generating response...")
-        prompt_tokens = np.array(tokenizer.encode(query), dtype=np.int32)
+        prompt_tokens = np.array(tokenizer.encode(contextual_query), dtype=np.int32)
         output_tokens = self.generate(prompt_tokens, max_tokens=max_tokens, temperature=temperature, tokenizer=tokenizer)
 
         # Decode

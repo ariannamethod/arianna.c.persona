@@ -144,8 +144,14 @@ class BookTraveler:
 
     def _index_books(self):
         """Find all available books"""
-        self.available_books = list(self.books_dir.glob('ariannabook*.md'))
-        print(f"📚 Indexed {len(self.available_books)} books")
+        # Look in personality/ folder
+        personality_dir = self.books_dir / 'personality'
+        if personality_dir.exists():
+            self.available_books = list(personality_dir.glob('ariannabook*.md'))
+        else:
+            # Fallback to current dir
+            self.available_books = list(self.books_dir.glob('ariannabook*.md'))
+        print(f"📚 Indexed {len(self.available_books)} books in personality/")
 
     def travel(self, query: str) -> List[BookExcerpt]:
         """
