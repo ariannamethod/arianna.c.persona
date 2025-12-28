@@ -3,7 +3,7 @@
 import numpy as np
 
 # Load weights
-weights = np.load('/home/user/llama3.np/stories15M.model.npz')
+weights = np.load('./llama3.np/stories15M.model.npz')
 
 print("PRETRAINED WEIGHTS STRUCTURE:")
 print("="*60)

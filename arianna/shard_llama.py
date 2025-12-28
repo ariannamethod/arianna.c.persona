@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import sys
 
-# Add llama3.np to path
-sys.path.insert(0, '/home/user/llama3.np')
+# Add llama3.np to path (relative to repo root!)
+import os
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root / 'llama3.np'))
 from llama3 import apply_rotary_emb, RMSNorm, FeedForward, Attention, compute_cos_sin_cache
 from config import ModelArgs
 
@@ -227,10 +229,16 @@ class ShardLlama:
     - LM Head: DYNAMIC (from shards!)
     """
 
-    def __init__(self, weights_path: str = '/home/user/llama3.np/stories15M.model.npz'):
+    def __init__(self, weights_path: Optional[str] = None):
         # Load pretrained weights
         print("Loading pretrained llama3.np weights...")
-        self.weights = np.load(weights_path)
+
+        # Default path: repo_root/llama3.np/stories15M.model.npz
+        if weights_path is None:
+            repo_root = Path(__file__).parent.parent
+            weights_path = repo_root / 'llama3.np' / 'stories15M.model.npz'
+
+        self.weights = np.load(str(weights_path))
 
         # Model config
         self.args = ModelArgs()

@@ -2,7 +2,7 @@
 
 import sys
 sys.path.insert(0, 'arianna')
-sys.path.insert(0, '/home/user/llama3.np')
+sys.path.insert(0, './llama3.np')
 
 import numpy as np
 from shard_llama import ShardLlama
@@ -19,7 +19,7 @@ llama = ShardLlama()
 
 # BPE Tokenizer (32k vocab!)
 print("\n2. Loading BPE tokenizer...")
-tok = Tokenizer('/home/user/llama3.np/tokenizer.model.np')
+tok = Tokenizer('./llama3.np/tokenizer.model.np')
 print(f"  Vocab size: {len(tok.vocab)}")
 
 # Load shards from books
