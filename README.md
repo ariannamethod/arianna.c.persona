@@ -332,7 +332,7 @@ Shards use LRU eviction. When topics die, their shards disappear. This is not da
 | Approach | Params | Knowledge | Training | Updates | Memory |
 |----------|--------|-----------|----------|---------|--------|
 | GPT-3 | 175B | In weights | $4.6M | Retrain | 350GB |
-| LLama-70B | 70B | In weights | $2M | Retrain | 140GB |
+| LLaMA-70B | 70B | In weights | $2M | Retrain | 140GB |
 | RAG + GPT | 175B | External DB | $4.6M | Add docs | 350GB + DB |
 | **Arianna** | **8M** | **Numpy shards** | **$0** | **Add shards** | **32MB + shards** |
 
